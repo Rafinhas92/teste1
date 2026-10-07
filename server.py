@@ -1,5 +1,6 @@
 """Local development server and Mercado Pago Checkout Pro integration."""
 import hashlib
+import hmac
 import json
 import math
 import os
@@ -9,6 +10,7 @@ import sqlite3
 import threading
 import time
 from decimal import Decimal
+from http.cookies import SimpleCookie, CookieError
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.error import HTTPError, URLError
@@ -27,6 +29,18 @@ TOKEN = os.environ.get('MERCADO_PAGO_ACCESS_TOKEN', '')
 PUBLIC_URL = os.environ.get('PAYMENT_PUBLIC_URL', '').rstrip('/')
 TEST_MODE = os.environ.get('PAYMENT_TEST_MODE', 'true').lower() == 'true'
 LOCK = threading.Lock()
+ADMIN_LOCK = threading.Lock()
+LOGIN_FAILURES = {}
+ADMIN_COOKIE = 'benedetto_admin'
+ADMIN_SESSION_SECONDS = 8 * 3600
+
+def password_hash(password):
+    return hashlib.scrypt(password.encode('utf-8'), salt=b'benedetto-admin-v1', n=16384, r=8, p=1, maxmem=64 * 1024 * 1024)
+
+_admin_password = os.environ.get('ADMIN_PASSWORD', '')
+ADMIN_VERIFIER = password_hash(_admin_password) if 12 <= len(_admin_password) <= 256 else None
+del _admin_password
+
 
 
 def db():
@@ -38,6 +52,15 @@ def db():
 with db() as connection:
     connection.execute('CREATE TABLE IF NOT EXISTS orders (id TEXT PRIMARY KEY, request_key TEXT UNIQUE, fingerprint TEXT, payload TEXT, total INTEGER, status TEXT, checkout_url TEXT, created REAL)')
     connection.execute('CREATE TABLE IF NOT EXISTS delivery_quotes (id TEXT PRIMARY KEY, address TEXT, meters INTEGER, fee INTEGER, expires REAL)')
+    columns = {row['name'] for row in connection.execute('PRAGMA table_info(orders)')}
+    if 'fulfillment_status' not in columns:
+        connection.execute("ALTER TABLE orders ADD COLUMN fulfillment_status TEXT NOT NULL DEFAULT 'received'")
+    if 'payment_test_mode' not in columns:
+        connection.execute('ALTER TABLE orders ADD COLUMN payment_test_mode INTEGER')
+    if 'fulfillment_updated' not in columns:
+        connection.execute('ALTER TABLE orders ADD COLUMN fulfillment_updated REAL')
+    connection.execute('CREATE TABLE IF NOT EXISTS admin_sessions (token_hash TEXT PRIMARY KEY, csrf TEXT, expires REAL, password_version TEXT)')
+    connection.execute('CREATE TABLE IF NOT EXISTS order_events (id INTEGER PRIMARY KEY, order_id TEXT, old_status TEXT, new_status TEXT, created REAL)')
 os.chmod(DB, 0o600)
 
 
@@ -256,7 +279,7 @@ def checkout(payload, key):
                 return {'order_id': row['id'], 'checkout_url': row['checkout_url']}
             order_id = row['id'] if row else secrets.token_urlsafe(32)
             if not row:
-                connection.execute('INSERT INTO orders VALUES (?,?,?,?,?,?,?,?)', (order_id, key, fingerprint, serialized, total, 'pending', None, time.time()))
+                connection.execute('INSERT INTO orders (id,request_key,fingerprint,payload,total,status,checkout_url,created,payment_test_mode) VALUES (?,?,?,?,?,?,?,?,?)', (order_id, key, fingerprint, serialized, total, 'pending', None, time.time(), int(TEST_MODE)))
         back_url = PUBLIC_URL + '/?order=' + order_id
         preference = mp('/checkout/preferences', {
             'items': normalized['items'], 'external_reference': order_id,
@@ -306,12 +329,109 @@ def reconcile(order_id):
             status = 'verification_pending' if result.get('results') else 'awaiting_payment'
         with db() as connection:
             connection.execute('UPDATE orders SET status=? WHERE id=?', (status, order_id))
+            if payments:
+                connection.execute('UPDATE orders SET payment_test_mode=? WHERE id=?', (int(TEST_MODE), order_id))
     else:
         status = order['status']
     result = {'order_id': order_id, 'status': status, 'total': order['total'] / 100, 'test_mode': TEST_MODE}
     if status == 'awaiting_payment' and urlsplit(order['checkout_url'] or '').hostname == 'www.mercadopago.com.br':
         result['checkout_url'] = order['checkout_url']
     return result
+
+
+FULFILLMENT_STATUSES = {'received', 'preparing', 'ready', 'out_for_delivery', 'completed', 'cancelled'}
+
+
+def admin_session(cookie_header):
+    if ADMIN_VERIFIER is None:
+        return None
+    try:
+        cookie = SimpleCookie()
+        cookie.load(cookie_header or '')
+        token = cookie[ADMIN_COOKIE].value if ADMIN_COOKIE in cookie else ''
+    except CookieError:
+        return None
+    if not re.fullmatch(r'[A-Za-z0-9_-]{43}', token):
+        return None
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+    version = hashlib.sha256(ADMIN_VERIFIER).hexdigest()
+    with db() as connection:
+        return connection.execute('SELECT * FROM admin_sessions WHERE token_hash=? AND expires>? AND password_version=?', (token_hash, time.time(), version)).fetchone()
+
+
+def admin_login(password, peer):
+    if ADMIN_VERIFIER is None:
+        return 503, None
+    if not isinstance(password, str) or not 1 <= len(password) <= 256:
+        return 400, None
+    with ADMIN_LOCK:
+        now = time.time()
+        for ip in list(LOGIN_FAILURES):
+            if LOGIN_FAILURES[ip]['until'] <= now:
+                del LOGIN_FAILURES[ip]
+        failure = LOGIN_FAILURES.get(peer, {'count': 0, 'until': now + 300})
+        if failure['count'] >= 5:
+            return 429, None
+        if not hmac.compare_digest(password_hash(password), ADMIN_VERIFIER):
+            failure['count'] += 1
+            LOGIN_FAILURES[peer] = failure
+            return 401, None
+        LOGIN_FAILURES.pop(peer, None)
+        token, csrf = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
+        with db() as connection:
+            connection.execute('DELETE FROM admin_sessions WHERE expires<=?', (now,))
+            connection.execute('INSERT INTO admin_sessions VALUES (?,?,?,?)', (hashlib.sha256(token.encode()).hexdigest(), csrf, now + ADMIN_SESSION_SECONDS, hashlib.sha256(ADMIN_VERIFIER).hexdigest()))
+        return 200, {'token': token, 'csrf': csrf}
+
+
+def admin_orders(query):
+    stage = query.get('stage', ['all'])[0]
+    if stage != 'all' and stage not in FULFILLMENT_STATUSES:
+        raise ValueError('Filtro inválido.')
+    page = int(query.get('page', ['1'])[0])
+    if not 1 <= page <= 100000:
+        raise ValueError('Página inválida.')
+    where = '' if stage == 'all' else 'WHERE fulfillment_status=?'
+    parameters = () if stage == 'all' else (stage,)
+    with db() as connection:
+        count = connection.execute('SELECT count(*) FROM orders ' + where, parameters).fetchone()[0]
+        rows = connection.execute('SELECT * FROM orders ' + where + ' ORDER BY created DESC,id DESC LIMIT 50 OFFSET ?', (*parameters, (page - 1) * 50)).fetchall()
+        counts = {row['fulfillment_status']: row['count'] for row in connection.execute('SELECT fulfillment_status,count(*) AS count FROM orders GROUP BY fulfillment_status')}
+    orders = []
+    for row in rows:
+        payload = json.loads(row['payload'])
+        orders.append({'id': row['id'], 'customer': payload['customer'], 'items': payload['items'],
+                       'fulfillment': payload['fulfillment'], 'address': payload.get('address', ''),
+                       'destination': payload.get('destination'), 'total': row['total'] / 100,
+                       'payment_status': row['status'], 'stage': row['fulfillment_status'],
+                       'test_mode': None if row['payment_test_mode'] is None else bool(row['payment_test_mode']),
+                       'created': row['created'], 'updated': row['fulfillment_updated']})
+    return {'orders': orders, 'page': page, 'pages': max(1, math.ceil(count / 50)), 'total': count, 'counts': counts, 'test_mode': TEST_MODE}
+
+
+def update_order_stage(order_id, stage, expected):
+    if stage not in FULFILLMENT_STATUSES:
+        raise ValueError('Status inválido.')
+    with db() as connection:
+        connection.execute('BEGIN IMMEDIATE')
+        row = connection.execute('SELECT * FROM orders WHERE id=?', (order_id,)).fetchone()
+        if not row:
+            raise LookupError('Pedido não encontrado.')
+        current = row['fulfillment_status']
+        if expected != current:
+            raise RuntimeError('Outro atendente atualizou este pedido. Atualize a lista.')
+        method = json.loads(row['payload'])['fulfillment']
+        transitions = {'received': {'preparing', 'cancelled'}, 'preparing': {'ready' if method == 'Retirada' else 'out_for_delivery', 'cancelled'}, 'ready': {'completed', 'cancelled'}, 'out_for_delivery': {'completed', 'cancelled'}, 'completed': set(), 'cancelled': set()}
+        if stage not in transitions[current]:
+            raise ValueError('Essa mudança de status não é permitida.')
+        if stage != 'cancelled' and row['payment_test_mode'] != int(TEST_MODE):
+            raise ValueError('Confira o ambiente do pagamento antes de preparar. Pedidos de teste não podem avançar em produção.')
+        if stage != 'cancelled' and row['status'] != 'paid':
+            raise ValueError('O pagamento ainda não está aprovado. Confira antes de preparar o pedido.')
+        now = time.time()
+        connection.execute('UPDATE orders SET fulfillment_status=?,fulfillment_updated=? WHERE id=?', (stage, now, order_id))
+        connection.execute('INSERT INTO order_events(order_id,old_status,new_status,created) VALUES (?,?,?,?)', (order_id, current, stage, now))
+    return {'stage': stage}
 
 
 class Handler(SimpleHTTPRequestHandler):
@@ -321,17 +441,46 @@ class Handler(SimpleHTTPRequestHandler):
     def log_message(self, *args):
         pass  # Do not log customer data or private order links.
 
-    def reply(self, code, body):
+    def reply(self, code, body, extra_headers=None):
         data = json.dumps(body, ensure_ascii=False).encode()
         self.send_response(code)
         self.send_header('Content-Type', 'application/json; charset=utf-8')
         self.send_header('Cache-Control', 'no-store')
         self.send_header('Content-Length', str(len(data)))
+        for key, value in (extra_headers or {}).items():
+            self.send_header(key, value)
         self.end_headers()
         self.wfile.write(data)
 
+    def end_headers(self):
+        self.send_header('X-Content-Type-Options', 'nosniff')
+        self.send_header('Referrer-Policy', 'no-referrer')
+        if urlsplit(self.path).path in ('/admin', '/admin.html', '/admin.js', '/admin.css'):
+            self.send_header('Cache-Control', 'no-store')
+            self.send_header('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'")
+        super().end_headers()
+
+    def session_cookie(self, token, age=ADMIN_SESSION_SECONDS):
+        secure = '; Secure' if os.environ.get('RENDER') or PUBLIC_URL.startswith('https://') else ''
+        return f'{ADMIN_COOKIE}={token}; Path=/; HttpOnly; SameSite=Strict; Max-Age={age}{secure}'
+
     def do_GET(self):
         parsed = urlsplit(self.path)
+        if parsed.path == '/api/admin/session':
+            session = admin_session(self.headers.get('Cookie'))
+            return self.reply(200, {'authenticated': bool(session), 'configured': ADMIN_VERIFIER is not None, 'csrf': session['csrf'] if session else None})
+        if parsed.path.startswith('/api/admin/'):
+            if not admin_session(self.headers.get('Cookie')):
+                return self.reply(401, {'error': 'Entre no painel para continuar.'})
+            if parsed.path == '/api/admin/orders':
+                try:
+                    return self.reply(200, admin_orders(parse_qs(parsed.query)))
+                except (ValueError, TypeError):
+                    return self.reply(400, {'error': 'Filtro ou página inválidos.'})
+            return self.reply(404, {'error': 'Não encontrado.'})
+        if parsed.path == '/admin':
+            self.path = '/admin.html'
+            return super().do_GET()
         if parsed.path == '/api/payment-config':
             return self.reply(200, {'enabled': ready(), 'test_mode': TEST_MODE, 'provider': 'mercado_pago', 'delivery_enabled': bool(MAPS_KEY), 'online_fulfillment': ['Retirada', 'Entrega'] if MAPS_KEY else ['Retirada']})
         if parsed.path == '/api/order-status':
@@ -343,7 +492,7 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.reply(200 if result else 404, result or {'error': 'Pedido não encontrado.'})
             except (HTTPError, URLError, TimeoutError, ValueError):
                 return self.reply(503, {'error': 'Não foi possível consultar o pagamento. Tente novamente.'})
-        allowed = {'/', '/index.html', '/script.js', '/style.css', '/restaurant-config.js'}
+        allowed = {'/', '/index.html', '/script.js', '/style.css', '/restaurant-config.js', '/admin.html', '/admin.js', '/admin.css'}
         if parsed.path not in allowed and not re.fullmatch(r'/assets/[A-Za-z0-9_.-]+\.(jpeg|jpg|png|webp|js|css|txt)', parsed.path):
             return self.reply(404, {'error': 'Não encontrado.'})
         return super().do_GET()
@@ -354,6 +503,8 @@ class Handler(SimpleHTTPRequestHandler):
         return super().do_HEAD()
 
     def do_POST(self):
+        if self.path.startswith('/api/admin/'):
+            return self.admin_post()
         if self.path not in ('/api/checkout', '/api/delivery-quote'):
             return self.reply(404, {'error': 'Não encontrado.'})
         origin = self.headers.get('Origin')
@@ -372,6 +523,55 @@ class Handler(SimpleHTTPRequestHandler):
             return self.reply(400, {'error': str(error) if isinstance(error, ValueError) and not isinstance(error, json.JSONDecodeError) else 'Confira os dados do pedido.'})
         except (HTTPError, URLError, TimeoutError, RuntimeError, KeyError):
             return self.reply(502, {'error': 'Não foi possível iniciar o pagamento. Tente novamente ou use o WhatsApp.'})
+
+
+    def admin_post(self):
+        origin = self.headers.get('Origin')
+        if origin not in {PUBLIC_URL, 'http://' + self.headers.get('Host', '')}:
+            return self.reply(403, {'error': 'Origem inválida.'})
+        session = admin_session(self.headers.get('Cookie'))
+        if self.path != '/api/admin/login':
+            if not session:
+                return self.reply(401, {'error': 'Sua sessão expirou. Entre novamente.'})
+            csrf = self.headers.get('X-CSRF-Token', '')
+            if not re.fullmatch(r'[A-Za-z0-9_-]{43}', csrf) or not hmac.compare_digest(csrf, session['csrf']):
+                return self.reply(403, {'error': 'Atualize a página e tente novamente.'})
+        try:
+            length = int(self.headers.get('Content-Length', '0'))
+            if not 0 < length <= 4096:
+                return self.reply(413, {'error': 'Dados excedem o limite.'})
+            payload = json.loads(self.rfile.read(length))
+            if not isinstance(payload, dict):
+                raise ValueError('Dados inválidos.')
+            if self.path == '/api/admin/login':
+                code, result = admin_login(payload.get('password'), self.client_address[0])
+                if code != 200:
+                    message = {503: 'O acesso ao painel ainda não foi configurado.', 429: 'Muitas tentativas. Aguarde cinco minutos.', 401: 'Senha incorreta.', 400: 'Informe uma senha válida.'}[code]
+                    return self.reply(code, {'error': message})
+                if session:
+                    with db() as connection:
+                        connection.execute('DELETE FROM admin_sessions WHERE token_hash=?', (session['token_hash'],))
+                return self.reply(200, {'csrf': result['csrf']}, {'Set-Cookie': self.session_cookie(result['token'])})
+            if self.path == '/api/admin/logout':
+                with db() as connection:
+                    connection.execute('DELETE FROM admin_sessions WHERE token_hash=?', (session['token_hash'],))
+                return self.reply(200, {'ok': True}, {'Set-Cookie': self.session_cookie('', 0)})
+            match = re.fullmatch(r'/api/admin/orders/([A-Za-z0-9_-]{43})/(stage|refresh)', self.path)
+            if not match:
+                return self.reply(404, {'error': 'Não encontrado.'})
+            order_id, action = match.groups()
+            if action == 'stage':
+                return self.reply(200, update_order_stage(order_id, payload.get('stage'), payload.get('expected')))
+            result = reconcile(order_id)
+            return self.reply(200 if result else 404, result or {'error': 'Pedido não encontrado.'})
+        except LookupError:
+            return self.reply(404, {'error': 'Pedido não encontrado.'})
+        except RuntimeError as error:
+            return self.reply(409, {'error': str(error)})
+        except (ValueError, TypeError) as error:
+            return self.reply(400, {'error': str(error) if not isinstance(error, json.JSONDecodeError) else 'Dados inválidos.'})
+        except (HTTPError, URLError, TimeoutError):
+            return self.reply(503, {'error': 'Não foi possível consultar o Mercado Pago agora. Tente novamente.'})
 
 
 def sync_orders():

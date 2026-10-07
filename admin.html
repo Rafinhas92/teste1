@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex,nofollow">
+  <title>Atendimento — Ristorante Benedetto</title>
+  <link rel="stylesheet" href="admin.css">
+  <script src="admin.js" defer></script>
+</head>
+<body>
+  <header><a class="brand" href="/admin">Ristorante Benedetto <span>Painel de atendimento</span></a><div class="header-actions"><a href="/" target="_blank" rel="noopener">Ver site ↗</a><button id="logout" class="secondary" hidden>Sair</button></div></header>
+  <main>
+    <section id="login-section" class="login-card">
+      <p class="eyebrow">ACESSO DA EQUIPE</p><h1>Vamos atender?</h1><p>Entre para acompanhar os pedidos e organizar o preparo.</p>
+      <form id="login-form"><label for="password">Senha do painel</label><input type="password" id="password" name="password" autocomplete="current-password" required maxlength="256"><button type="submit" id="login-button">Entrar no painel</button></form>
+      <p id="login-message" role="alert"></p>
+    </section>
+    <section id="dashboard" hidden>
+      <div class="heading"><div><p class="eyebrow">CADA PEDIDO, UM BOM ENCONTRO</p><h1>Pedidos da casa</h1></div><button id="refresh" class="secondary">Atualizar pedidos</button></div>
+      <p id="test-banner" class="notice" hidden>Ambiente de teste: estes pedidos não devem ser preparados ou entregues.</p>
+      <p class="description">Pedidos do checkout online. Solicitações pelo WhatsApp e reservas são acompanhadas no próprio WhatsApp.</p>
+      <div class="stats" id="stats"></div>
+      <div class="toolbar"><label for="stage-filter">Filtrar atendimento</label><select id="stage-filter"><option value="all">Todos os pedidos</option><option value="received">Recebidos</option><option value="preparing">Em preparo</option><option value="ready">Prontos para retirada</option><option value="out_for_delivery">Saiu para entrega</option><option value="completed">Concluídos</option><option value="cancelled">Cancelados</option></select><span id="last-updated"></span></div>
+      <p id="dashboard-message" role="alert"></p>
+      <div id="orders" aria-live="polite" aria-busy="false"></div>
+      <div class="pagination"><button id="previous" class="secondary">← Anterior</button><span id="page-label"></span><button id="next" class="secondary">Próxima →</button></div>
+    </section>
+  </main>
+  <footer>Atendimento Ristorante Benedetto · O status de preparo não altera a confirmação do pagamento.</footer>
+</body>
+</html>
