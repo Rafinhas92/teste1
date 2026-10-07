@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Ristorante Benedetto: cozinha internacional em Dourados, MS. Confira o cardápio, monte seu pedido e solicite sua reserva pelo WhatsApp.">
+  <title>Ristorante Benedetto</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="header">
+    <a class="brand" href="#inicio">Ristorante Benedetto<span>À mesa, bons momentos.</span></a>
+    <nav aria-label="Navegação principal"><a href="#cardapio">Cardápio</a><a href="#reservas">Reservas</a><a href="#sobre">Nossa casa</a><a href="#visite">Visite-nos <span aria-hidden="true">↗</span></a></nav>
+  </header>
+  <main>
+    <section class="hero" id="inicio">
+      <div class="hero-copy"><p class="eyebrow">DOURADOS · MATO GROSSO DO SUL</p><h1>A boa noite<br>começa <em>à mesa.</em></h1><p>Sabores do mundo, boas conversas e o prazer de jantar sem pressa. Peça para entrega ou retirada, ou reserve sua mesa.</p><a class="button" href="#cardapio">Monte seu pedido <span aria-hidden="true">↗</span></a><p class="small">Uma casa para reunir, compartilhar e celebrar.</p></div>
+      <div class="hero-art photo-hero"><img src="assets/_DSC4889-DjueB3s6.jpeg" alt="Tartine de cogumelos do Ristorante Benedetto"><span class="art-caption">TARTINE DE COGUMELOS · R$ 65,00</span></div>
+    </section>
+    <div class="ribbon" aria-hidden="true">SABOR QUE APROXIMA <span>✳</span> MOMENTOS QUE FICAM <span>✳</span> UM LUGAR À SUA MESA <span>✳</span></div>
+    <section class="section menu-section" id="cardapio">
+      <div class="section-heading"><div><p class="eyebrow">ESCOLHA O SEU MOMENTO</p><h2>O que vai bem hoje?</h2></div><p>Cozinha internacional, da entrada ao brinde.<br>Informe restrições alimentares e alergias no pedido.</p></div>
+      <div class="filters" id="menu-filters" role="group" aria-label="Filtrar cardápio"></div>
+      <div class="menu-grid" id="menu-items">
+      </div>
+    </section>
+    <section class="section order-section" id="pedido">
+      <div class="section-heading"><div><p class="eyebrow">SEU PEDIDO</p><h2>Sabores para levar.</h2></div><p id="cart-status" role="status" aria-live="polite">Seu carrinho está vazio.</p></div>
+      <div id="cart-items"></div>
+      <p class="cart-total">Total: <strong id="cart-total">R$ 0,00</strong></p>
+      <form id="order-form" class="customer-form">
+        <label>Seu nome<input name="name" required autocomplete="name" maxlength="100"></label>
+        <label>Telefone<input name="phone" type="tel" autocomplete="tel" maxlength="20" placeholder="(67) 99999-9999" required></label>
+        <label>Como deseja receber?<select name="fulfillment"><option value="Retirada">Retirada no restaurante</option><option value="Entrega">Entrega (sujeita à confirmação)</option></select></label>
+        <label id="address-label" hidden>Endereço completo de entrega<input name="address" autocomplete="street-address" maxlength="300" placeholder="Rua, número, bairro, cidade e CEP"></label>
+        <div id="delivery-section" hidden><button type="button" class="add-button" id="calculate-delivery">Calcular frete</button><p id="delivery-feedback" role="status" aria-live="polite"></p><p class="notice">Até 3 km: R$ 6,50 · até 5 km: R$ 7,50 · até 7 km: R$ 8,50 · acima de 7 km: R$ 10,00. Distância calculada pela rota de carro.</p></div>
+        <label>Observações<textarea name="notes" rows="2" maxlength="500" placeholder="Alguma preferência para o pedido?"></textarea></label>
+        <label>Pagamento<select name="payment"><option value="whatsapp">Combinar pelo WhatsApp</option><option value="online" disabled>Pagamento online — verificando disponibilidade</option></select></label>
+        <p id="payment-notice" class="notice" role="status">Verificando pagamento online…</p>
+        <p class="notice">Envie seu pedido pelo WhatsApp. Disponibilidade, frete, prazo e pagamento serão combinados com a equipe. Seu pedido só será confirmado após o atendimento.</p>
+        <button class="button" type="submit" disabled id="send-order">Enviar pedido pelo WhatsApp ↗</button>
+        <p id="payment-status" role="status" aria-live="polite"></p>
+        <p id="order-feedback" role="status" aria-live="polite"></p>
+      </form>
+    </section>
+    <section class="section reservation-section" id="reservas">
+      <p class="eyebrow">UM ENCONTRO MARCADO</p><h2>Reserve seu momento.</h2>
+      <p>A solicitação será enviada ao restaurante. Sua reserva depende da confirmação da equipe.</p>
+      <form id="reservation-form" class="customer-form">
+        <label>Seu nome<input name="name" required autocomplete="name" maxlength="100"></label>
+        <label>Data<input type="date" name="date" required></label>
+        <label>Horário<input type="time" name="time" required></label>
+        <label>Pessoas<input type="number" name="guests" min="1" max="30" value="2" required></label>
+        <label>Observações<textarea name="notes" rows="2" maxlength="500"></textarea></label>
+        <p class="notice">Funcionamento de segunda a sábado, a partir das 19h. Consulte a equipe para outros horários.</p>
+        <button class="button" type="submit" disabled id="send-reservation">Solicitar reserva pelo WhatsApp ↗</button>
+        <p id="reservation-feedback" role="status" aria-live="polite"></p>
+      </form>
+    </section>
+    <section class="about section" id="sobre"><p class="eyebrow">PRAZER, SUA PRÓXIMA MESA.</p><h2>Mais que uma refeição.<br><em>Um bom encontro.</em></h2><p>Cozinha internacional em Dourados: massas, risotos, carnes, vinhos e drinks para um jantar sem pressa. Toda segunda-feira, traga seu vinho e aproveite a rolha livre.</p></section>
+    <section class="visit section" id="visite"><div><p class="eyebrow">VENHA NOS CONHECER</p><h2>Seu lugar à mesa.</h2><p>Estamos em Dourados, Mato Grosso do Sul. Será um prazer receber você.</p></div><dl><div><dt>Endereço</dt><dd>Rua Nelson de Araújo, 684 — Dourados, MS</dd></div><div><dt>Horário de funcionamento</dt><dd>De segunda a sábado, a partir das 19h</dd></div><div><dt>Contato e reservas</dt><dd><a href="tel:+5567998418006">(67) 99841-8006</a></dd></div></dl></section>
+  </main>
+  <footer><a class="brand" href="#inicio">Ristorante Benedetto</a><p>Boa comida. Bons momentos.</p><a href="#inicio">Voltar ao topo ↑</a></footer>
+  <script src="restaurant-config.js"></script>
+  <script src="script.js"></script>
+</body>
+</html>

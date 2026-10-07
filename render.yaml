@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: ristorante-benedetto
+    runtime: python
+    plan: starter
+    buildCommand: python -m compileall -q server.py
+    startCommand: python server.py
+    healthCheckPath: /
+    autoDeployTrigger: "off"
+    envVars:
+      - key: HOST
+        value: 0.0.0.0
+      - key: PAYMENT_TEST_MODE
+        value: "true"
+      - key: ORDER_DATA_DIR
+        value: /var/data/benedetto
+      - key: PAYMENT_PUBLIC_URL
+        sync: false
+      - key: MERCADO_PAGO_ACCESS_TOKEN
+        sync: false
+      - key: GOOGLE_MAPS_API_KEY
+        sync: false
+    disk:
+      name: benedetto-orders
+      mountPath: /var/data/benedetto
+      sizeGB: 1
