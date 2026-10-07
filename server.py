@@ -287,4 +287,8 @@ def sync_orders():
 if __name__ == '__main__':
     threading.Thread(target=sync_orders, daemon=True).start()
     print('Benedetto development server; online payment ' + ('configured' if ready() else 'not configured'), flush=True)
-    ThreadingHTTPServer((os.environ.get('HOST', '127.0.0.1'), int(os.environ.get('PORT', '8001'))), Handler).serve_forever()
+    # Hosting platforms expose PORT and require listening on all interfaces.
+    host = os.environ.get('HOST') or ('0.0.0.0' if os.environ.get('PORT') or os.environ.get('RENDER') else '127.0.0.1')
+    port = int(os.environ.get('PORT', '8001'))
+    print(f'Listening on {host}:{port}', flush=True)
+    ThreadingHTTPServer((host, port), Handler).serve_forever()
