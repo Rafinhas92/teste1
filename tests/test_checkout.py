@@ -146,6 +146,22 @@ class CheckoutTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             server.validate(payload)
 
+    def test_map_point_is_confirmed_and_bound_to_quote(self):
+        payload = {'address': 'Rua Teste, 100, Centro, Dourados MS', 'destination': {'latitude': -22.23, 'longitude': -54.81}, 'pin_confirmed': True}
+        with patch.object(server, 'route_distance', return_value=4000) as route:
+            quote = server.quote_delivery(payload)
+            route.assert_called_once_with(server.address_key(payload['address']), [-54.81, -22.23])
+        order = {**self.payload, **payload, 'fulfillment': 'Entrega', 'quote_id': quote['quote_id']}
+        normalized, total = server.validate(order)
+        self.assertEqual(total, 13750)
+        self.assertEqual(normalized['destination'], payload['destination'])
+        with self.assertRaises(ValueError):
+            server.validate({**order, 'destination': {'latitude': -22.24, 'longitude': -54.81}})
+        with self.assertRaises(ValueError):
+            server.quote_delivery({**payload, 'pin_confirmed': False})
+        with self.assertRaises(ValueError):
+            server.quote_delivery({**payload, 'destination': {'latitude': float('nan'), 'longitude': -54.81}})
+
     def test_changed_order_cannot_reuse_key(self):
         with patch.object(server, 'mp', return_value={'init_point': 'https://www.mercadopago.com.br/test'}):
             server.checkout(self.payload, self.key)

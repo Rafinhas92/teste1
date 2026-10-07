@@ -8,6 +8,9 @@ let checkoutBusy = false;
 let deliveryQuote = null;
 let deliveryBusy = false;
 let quoteExpiryTimer;
+let deliveryPoint = null;
+let deliveryMap;
+let deliveryMarker;
 const categories = Object.fromEntries(config.categories.map(category => [category.id, [category.label.toUpperCase(), 'main-art']]));
 const menu = document.querySelector('#menu-items');
 const contactReady = /^\d{10,15}$/.test(config.whatsapp);
@@ -166,6 +169,8 @@ async function payOnline(data) {
     fulfillment: data.get('fulfillment'),
     address: data.get('fulfillment') === 'Entrega' ? data.get('address') : '',
     quote_id: data.get('fulfillment') === 'Entrega' ? deliveryQuote?.quote_id : null,
+    destination: data.get('fulfillment') === 'Entrega' ? deliveryPoint : null,
+    pin_confirmed: document.querySelector('#confirm-delivery-pin').checked,
     items: [...cart].map(([id, quantity]) => ({ id, quantity }))
   };
   const fingerprint = JSON.stringify(payload);
@@ -235,6 +240,7 @@ checkReturnedPayment();
 
 orderForm.elements.address.addEventListener('input', () => {
   deliveryQuote = null;
+  document.querySelector('#confirm-delivery-pin').checked = false;
   clearTimeout(quoteExpiryTimer);
   document.querySelector('#delivery-feedback').textContent = 'Calcule o frete para este endereço.';
   renderCart();
@@ -243,15 +249,17 @@ document.querySelector('#calculate-delivery').addEventListener('click', async ()
   const address = orderForm.elements.address.value.trim();
   const feedback = document.querySelector('#delivery-feedback');
   if (address.length < 15) { feedback.textContent = 'Informe rua, número, bairro, cidade e CEP.'; return; }
+  if (deliveryPoint && !document.querySelector('#confirm-delivery-pin').checked) { feedback.textContent = 'Confirme se o ponto marcado corresponde ao endereço.'; return; }
   if (deliveryBusy || !paymentConfig.delivery_enabled) return;
+  const selectedPoint = JSON.stringify(deliveryPoint);
   deliveryBusy = true;
   deliveryQuote = null;
   feedback.textContent = 'Calculando a rota e o frete…';
   renderCart();
   try {
-    const response = await fetch('/api/delivery-quote', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ address }) });
+    const response = await fetch('/api/delivery-quote', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ address, destination: deliveryPoint, pin_confirmed: document.querySelector('#confirm-delivery-pin').checked }) });
     const result = await response.json();
-    if (address !== orderForm.elements.address.value.trim() || orderForm.elements.fulfillment.value !== 'Entrega') return;
+    if (address !== orderForm.elements.address.value.trim() || selectedPoint !== JSON.stringify(deliveryPoint) || (deliveryPoint && !document.querySelector('#confirm-delivery-pin').checked) || orderForm.elements.fulfillment.value !== 'Entrega') return;
     if (!response.ok) throw new Error(result.error || 'Não foi possível calcular o frete.');
     deliveryQuote = result;
     feedback.textContent = `${(result.distance_meters / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 2 })} km de percurso · Frete: ${money(result.fee)} · Válido por 15 minutos.`;
@@ -259,4 +267,54 @@ document.querySelector('#calculate-delivery').addEventListener('click', async ()
     quoteExpiryTimer = setTimeout(() => { deliveryQuote = null; feedback.textContent = 'O frete expirou. Calcule novamente.'; renderCart(); }, Math.max(0, result.expires_at * 1000 - Date.now()));
   } catch (error) { feedback.textContent = error.message || 'Não foi possível calcular o frete. Combine a entrega pelo WhatsApp.'; }
   finally { deliveryBusy = false; renderCart(); }
+});
+
+function invalidateDeliveryQuote() {
+  deliveryQuote = null;
+  clearTimeout(quoteExpiryTimer);
+  document.querySelector('#delivery-feedback').textContent = 'Calcule novamente o frete para este ponto de entrega.';
+  renderCart();
+}
+function showDeliveryMap() {
+  const container = document.querySelector('#delivery-map');
+  container.hidden = false;
+  if (!deliveryMap) {
+    if (!window.L) throw new Error('O mapa não carregou. Tente atualizar a página.');
+    const location = config.restaurant_location;
+    deliveryMap = L.map(container).setView([location.latitude, location.longitude], 15);
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>'
+    }).addTo(deliveryMap);
+    L.circleMarker([location.latitude, location.longitude], { radius: 7, color: '#263e31', fillOpacity: 1 }).addTo(deliveryMap).bindTooltip('Ristorante Benedetto');
+    deliveryMap.on('click', event => selectDeliveryPoint(event.latlng.lat, event.latlng.lng));
+  }
+  setTimeout(() => deliveryMap.invalidateSize(), 0);
+  return deliveryMap;
+}
+function selectDeliveryPoint(latitude, longitude) {
+  deliveryPoint = { latitude, longitude };
+  document.querySelector('#confirm-delivery-pin').checked = false;
+  document.querySelector('#pin-confirmation').hidden = false;
+  if (deliveryMarker) deliveryMarker.remove();
+  deliveryMarker = L.circleMarker([latitude, longitude], { radius: 10, color: '#c45632', fillOpacity: 0.8 }).addTo(deliveryMap).bindTooltip('Local de entrega');
+  document.querySelector('#pin-feedback').textContent = 'Ponto selecionado. Confira a posição no mapa e confirme abaixo.';
+  invalidateDeliveryQuote();
+}
+document.querySelector('#choose-delivery-point').addEventListener('click', () => {
+  try { showDeliveryMap(); document.querySelector('#pin-feedback').textContent = 'Toque ou clique no mapa exatamente onde deseja receber a entrega.'; }
+  catch (error) { document.querySelector('#pin-feedback').textContent = error.message; }
+});
+document.querySelector('#confirm-delivery-pin').addEventListener('change', invalidateDeliveryQuote);
+document.querySelector('#use-my-location').addEventListener('click', () => {
+  const feedback = document.querySelector('#pin-feedback');
+  if (!navigator.geolocation) { feedback.textContent = 'Seu navegador não oferece localização. Marque o ponto no mapa.'; return; }
+  feedback.textContent = 'Aguardando sua permissão de localização…';
+  navigator.geolocation.getCurrentPosition(position => {
+    if (position.coords.accuracy > 100) { feedback.textContent = 'A localização está imprecisa. Marque o ponto exato no mapa.'; return; }
+    try {
+      const map = showDeliveryMap();
+      selectDeliveryPoint(position.coords.latitude, position.coords.longitude);
+      map.setView([position.coords.latitude, position.coords.longitude], 17);
+    } catch (error) { feedback.textContent = error.message; }
+  }, () => { feedback.textContent = 'Não conseguimos obter sua localização. Marque o ponto no mapa.'; }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 });
 });

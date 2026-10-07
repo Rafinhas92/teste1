@@ -6,6 +6,7 @@
   <meta name="description" content="Ristorante Benedetto: cozinha internacional em Dourados, MS. Confira o cardápio, monte seu pedido e solicite sua reserva pelo WhatsApp.">
   <title>Ristorante Benedetto</title>
   <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="assets/leaflet.css">
 </head>
 <body>
   <header class="header">
@@ -33,7 +34,7 @@
         <label>Telefone<input name="phone" type="tel" autocomplete="tel" maxlength="20" placeholder="(67) 99999-9999" required></label>
         <label>Como deseja receber?<select name="fulfillment"><option value="Retirada">Retirada no restaurante</option><option value="Entrega">Entrega (sujeita à confirmação)</option></select></label>
         <label id="address-label" hidden>Endereço completo de entrega<input name="address" autocomplete="street-address" maxlength="300" placeholder="Rua, número, bairro, cidade e CEP"></label>
-        <div id="delivery-section" hidden><button type="button" class="add-button" id="calculate-delivery">Calcular frete</button><p id="delivery-feedback" role="status" aria-live="polite"></p><p class="notice">Até 3 km: R$ 6,50 · até 5 km: R$ 7,50 · até 7 km: R$ 8,50 · acima de 7 km: R$ 10,00. Distância calculada pela rota de carro.</p><p class="notice">Rotas por <a href="https://openrouteservice.org/" target="_blank" rel="noopener noreferrer">OpenRouteService</a> · Dados © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap contributors</a>.</p></div>
+        <div id="delivery-section" hidden><button type="button" class="add-button" id="choose-delivery-point">Marcar entrega no mapa</button><button type="button" class="add-button" id="use-my-location">Usar minha localização</button><div id="delivery-map" hidden aria-label="Mapa para marcar o local de entrega"></div><p id="pin-feedback" role="status" aria-live="polite"></p><label class="pin-confirmation" id="pin-confirmation" hidden><input type="checkbox" id="confirm-delivery-pin">Confirmei que o ponto marcado corresponde ao endereço de entrega.</label><button type="button" class="add-button" id="calculate-delivery">Calcular frete</button><p id="delivery-feedback" role="status" aria-live="polite"></p><p class="notice">Até 3 km: R$ 6,50 · até 5 km: R$ 7,50 · até 7 km: R$ 8,50 · acima de 7 km: R$ 10,00. Distância calculada pela rota de carro.</p><p class="notice">Rotas por <a href="https://openrouteservice.org/" target="_blank" rel="noopener noreferrer">OpenRouteService</a> · Dados © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap contributors</a>.</p></div>
         <label>Observações<textarea name="notes" rows="2" maxlength="500" placeholder="Alguma preferência para o pedido?"></textarea></label>
         <label>Pagamento<select name="payment"><option value="whatsapp">Combinar pelo WhatsApp</option><option value="online" disabled>Pagamento online — verificando disponibilidade</option></select></label>
         <p id="payment-notice" class="notice" role="status">Verificando pagamento online…</p>
@@ -61,6 +62,7 @@
     <section class="visit section" id="visite"><div><p class="eyebrow">VENHA NOS CONHECER</p><h2>Seu lugar à mesa.</h2><p>Estamos em Dourados, Mato Grosso do Sul. Será um prazer receber você.</p></div><dl><div><dt>Endereço</dt><dd>Rua Nelson de Araújo, 684 — Dourados, MS</dd></div><div><dt>Horário de funcionamento</dt><dd>De segunda a sábado, a partir das 19h</dd></div><div><dt>Contato e reservas</dt><dd><a href="tel:+5567998418006">(67) 99841-8006</a></dd></div></dl></section>
   </main>
   <footer><a class="brand" href="#inicio">Ristorante Benedetto</a><p>Boa comida. Bons momentos.</p><a href="#inicio">Voltar ao topo ↑</a></footer>
+  <script src="assets/leaflet.js"></script>
   <script src="restaurant-config.js"></script>
   <script src="script.js"></script>
 </body>

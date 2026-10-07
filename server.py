@@ -108,7 +108,7 @@ def geocode_address(address):
     return candidates[0][1]
 
 
-def route_distance(address):
+def route_distance(address, destination=None):
     global ORS_ORIGIN
     if ORS_ORIGIN is None:
         latitude = os.environ.get('RESTAURANT_LATITUDE', '')
@@ -130,7 +130,8 @@ def route_distance(address):
                 ORS_ORIGIN = geocode_address('Rua Nelson de Araújo, 684, Dourados, MS, Brasil')
             except ValueError:
                 raise ValueError('Não conseguimos localizar o restaurante com precisão. A equipe precisa confirmar o ponto de partida antes de calcular o frete.') from None
-    destination = geocode_address(address)
+    if destination is None:
+        destination = geocode_address(address)
     result = ors_request('/v2/directions/driving-car/json', {'coordinates': [ORS_ORIGIN, destination], 'units': 'm'})
     routes = result.get('routes', [])
     meters = routes[0].get('summary', {}).get('distance') if routes else None
@@ -140,16 +141,33 @@ def route_distance(address):
     return math.ceil(meters)
 
 
+def destination_point(payload):
+    point = payload.get('destination')
+    if point is None:
+        return None
+    if not isinstance(point, dict) or payload.get('pin_confirmed') is not True:
+        raise ValueError('Confirme se o ponto no mapa corresponde ao endereço de entrega.')
+    lat, lon = point.get('latitude'), point.get('longitude')
+    if (type(lat) not in (int, float) or type(lon) not in (int, float)
+        or not math.isfinite(lat) or not math.isfinite(lon)
+        or not -90 <= lat <= 90 or not -180 <= lon <= 180):
+        raise ValueError('Ponto de entrega inválido.')
+    return [lon, lat]
+
+
 def quote_delivery(payload):
     if not isinstance(payload, dict):
         raise ValueError('Endereço inválido.')
     address = address_key(payload.get('address'))
+    point = destination_point(payload)
+    # Bind the quote to both the address and the selected point.
+    address = json.dumps([address, point])
     now = time.time()
     with db() as connection:
         row = connection.execute('SELECT * FROM delivery_quotes WHERE address=? AND expires>? ORDER BY expires DESC LIMIT 1', (address, now)).fetchone()
     if row:
         return {'quote_id': row['id'], 'distance_meters': row['meters'], 'fee': row['fee'] / 100, 'expires_at': row['expires']}
-    meters = route_distance(address)
+    meters = route_distance(address_key(payload.get('address'))) if point is None else route_distance(address_key(payload.get('address')), point)
     fee = delivery_fee(meters)
     quote_id = secrets.token_urlsafe(32)
     expires = now + 900
@@ -179,7 +197,8 @@ def validate(payload):
         raise ValueError('Escolha entrega ou retirada.')
     shipping = None
     if fulfillment == 'Entrega':
-        address = address_key(payload.get('address'))
+        point = destination_point(payload)
+        address = json.dumps([address_key(payload.get('address')), point])
         quote_id = payload.get('quote_id')
         if not isinstance(quote_id, str):
             raise ValueError('Calcule o frete antes do pagamento.')
@@ -207,7 +226,7 @@ def validate(payload):
         items.append({'id': 'delivery-fee', 'title': 'Frete Benedetto', 'quantity': 1, 'currency_id': 'BRL', 'unit_price': shipping['fee'] / 100})
     if total > 500000:
         raise ValueError('Para pedidos acima de R$ 5.000, fale com o restaurante.')
-    return {'customer': {'name': name.strip(), 'phone': re.sub(r'\D', '', phone), 'notes': notes}, 'fulfillment': fulfillment, 'address': payload.get('address', '') if shipping else '', 'items': items}, total
+    return {'customer': {'name': name.strip(), 'phone': re.sub(r'\D', '', phone), 'notes': notes}, 'fulfillment': fulfillment, 'address': payload.get('address', '') if shipping else '', 'destination': payload.get('destination') if shipping else None, 'items': items}, total
 
 
 def verify_test_seller():
@@ -242,7 +261,7 @@ def checkout(payload, key):
         preference = mp('/checkout/preferences', {
             'items': normalized['items'], 'external_reference': order_id,
             'payer': {'name': normalized['customer']['name']},
-            'metadata': {'order_id': order_id, 'customer_phone': normalized['customer']['phone'], 'notes': normalized['customer']['notes'], 'fulfillment': normalized['fulfillment'], 'address': normalized['address']},
+            'metadata': {'order_id': order_id, 'customer_phone': normalized['customer']['phone'], 'notes': normalized['customer']['notes'], 'fulfillment': normalized['fulfillment'], 'address': normalized['address'], 'destination': normalized['destination']},
             'back_urls': {'success': back_url, 'pending': back_url, 'failure': back_url},
             'auto_return': 'approved', 'statement_descriptor': 'BENEDETTO',
         }, key)
@@ -325,7 +344,7 @@ class Handler(SimpleHTTPRequestHandler):
             except (HTTPError, URLError, TimeoutError, ValueError):
                 return self.reply(503, {'error': 'Não foi possível consultar o pagamento. Tente novamente.'})
         allowed = {'/', '/index.html', '/script.js', '/style.css', '/restaurant-config.js'}
-        if parsed.path not in allowed and not re.fullmatch(r'/assets/[A-Za-z0-9_.-]+\.(jpeg|jpg|png|webp)', parsed.path):
+        if parsed.path not in allowed and not re.fullmatch(r'/assets/[A-Za-z0-9_.-]+\.(jpeg|jpg|png|webp|js|css|txt)', parsed.path):
             return self.reply(404, {'error': 'Não encontrado.'})
         return super().do_GET()
 
