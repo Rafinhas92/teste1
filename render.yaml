@@ -18,7 +18,7 @@ services:
         sync: false
       - key: MERCADO_PAGO_ACCESS_TOKEN
         sync: false
-      - key: GOOGLE_MAPS_API_KEY
+      - key: ORS_API_KEY
         sync: false
     disk:
       name: benedetto-orders

@@ -153,5 +153,41 @@ class CheckoutTests(unittest.TestCase):
                 server.checkout({**self.payload, 'items': [{'id': 'tartine', 'quantity': 1}]}, self.key)
 
 
+class OpenRouteServiceTests(unittest.TestCase):
+    def setUp(self):
+        settings = patch.multiple(server, MAPS_KEY='local-ors-placeholder', ORS_ORIGIN=None)
+        settings.start()
+        self.addCleanup(settings.stop)
+
+    def feature(self, coordinates, number='684', confidence=1):
+        return {'geometry': {'coordinates': coordinates}, 'properties': {'layer': 'address', 'housenumber': number, 'confidence': confidence}}
+
+    def test_geocoding_route_and_origin_cache(self):
+        origin = self.feature([-54.80, -22.22])
+        destination = self.feature([-54.81, -22.23], '100')
+        with patch.object(server, 'ors_request', side_effect=[{'features': [origin]}, {'features': [destination]}, {'routes': [{'summary': {'distance': 3000.1}}]}, {'features': [destination]}, {'routes': [{'summary': {'distance': 3000}}]}]) as api:
+            self.assertEqual(server.route_distance('Rua Teste, 100, Dourados MS'), 3001)
+            self.assertEqual(server.route_distance('Rua Teste, 100, Dourados MS'), 3000)
+            route_calls = [call for call in api.call_args_list if '/directions/' in call.args[0]]
+            self.assertEqual(route_calls[0].args[1]['coordinates'], [[-54.80, -22.22], [-54.81, -22.23]])
+            self.assertEqual(api.call_count, 5)
+
+    def test_inaccurate_and_ambiguous_addresses_are_rejected(self):
+        for features in [[], [self.feature([-54.8,-22.2], confidence=0.5)], [self.feature([-54.8,-22.2], number='999')], [self.feature([-54.8,-22.2]), self.feature([-54.9,-22.3])]]:
+            with self.subTest(features=features), patch.object(server, 'ors_request', return_value={'features': features}), self.assertRaises(ValueError):
+                server.geocode_address('Rua Nelson de Araújo, 684, Dourados MS')
+
+    def test_quota_error_and_server_only_authentication(self):
+        from urllib.error import HTTPError
+        with patch.object(server, 'urlopen', side_effect=HTTPError('https://api.openrouteservice.org',429,'Too many requests',{},None)) as http:
+            with self.assertRaisesRegex(ValueError, 'limite'):
+                server.ors_request('/geocode/search?text=teste')
+            request = http.call_args.args[0]
+            self.assertEqual(request.get_header('Authorization'), 'local-ors-placeholder')
+            self.assertNotIn('local-ors-placeholder', request.full_url)
+        with patch.object(server, 'MAPS_KEY', ''), self.assertRaisesRegex(ValueError, 'não ativado'):
+            server.ors_request('/geocode/search?text=teste')
+
+
 if __name__ == '__main__':
     unittest.main()

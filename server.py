@@ -1,6 +1,7 @@
 """Local development server and Mercado Pago Checkout Pro integration."""
 import hashlib
 import json
+import math
 import os
 import re
 import secrets
@@ -20,7 +21,8 @@ CATALOG = {item['id']: item for item in CONFIG['menu']}
 DATA = Path(os.environ.get('ORDER_DATA_DIR', ROOT / '.local'))
 DATA.mkdir(parents=True, exist_ok=True)
 DB = DATA / 'orders.sqlite3'
-MAPS_KEY = os.environ.get('GOOGLE_MAPS_API_KEY', '')
+MAPS_KEY = os.environ.get('ORS_API_KEY', '')
+ORS_ORIGIN = None
 TOKEN = os.environ.get('MERCADO_PAGO_ACCESS_TOKEN', '')
 PUBLIC_URL = os.environ.get('PAYMENT_PUBLIC_URL', '').rstrip('/')
 TEST_MODE = os.environ.get('PAYMENT_TEST_MODE', 'true').lower() == 'true'
@@ -66,21 +68,58 @@ def address_key(address):
     return ' '.join(address.strip().casefold().split())
 
 
-def route_distance(address):
+def ors_request(path, payload=None):
     if not MAPS_KEY:
         raise ValueError('Cálculo de frete ainda não ativado. Combine a entrega pelo WhatsApp.')
-    request = Request('https://routes.googleapis.com/directions/v2:computeRoutes',
-        headers={'Content-Type': 'application/json', 'X-Goog-Api-Key': MAPS_KEY,
-                 'X-Goog-FieldMask': 'routes.distanceMeters'},
-        data=json.dumps({'origin': {'address': 'Rua Nelson de Araújo, 684, Dourados, MS, Brasil'},
-                         'destination': {'address': address}, 'travelMode': 'DRIVE',
-                         'routingPreference': 'TRAFFIC_UNAWARE', 'languageCode': 'pt-BR'}).encode())
-    with urlopen(request, timeout=20) as response:
-        result = json.load(response)
+    request = Request('https://api.openrouteservice.org' + path,
+        headers={'Content-Type': 'application/json', 'Authorization': MAPS_KEY},
+        data=None if payload is None else json.dumps(payload).encode())
+    try:
+        with urlopen(request, timeout=20) as response:
+            return json.load(response)
+    except HTTPError as error:
+        if error.code == 429:
+            raise ValueError('O limite de consultas de frete foi atingido. Tente depois ou combine a entrega pelo WhatsApp.') from None
+        if error.code in (401, 403):
+            raise ValueError('O serviço de frete precisa de configuração. Combine a entrega pelo WhatsApp.') from None
+        if error.code in (400, 404):
+            raise ValueError('Não encontramos uma rota para esse endereço. Confira os dados ou fale com o restaurante.') from None
+        raise
+
+
+def geocode_address(address):
+    result = ors_request('/geocode/search?' + urlencode({'text': address, 'boundary.country': 'BR', 'layers': 'address', 'size': 3}))
+    candidates = []
+    for feature in result.get('features', []):
+        properties = feature.get('properties', {})
+        coordinates = feature.get('geometry', {}).get('coordinates', [])
+        number = str(properties.get('housenumber', ''))
+        confidence = properties.get('confidence', 0)
+        if (properties.get('layer') == 'address' and number
+            and re.search(r'(?<!\d)' + re.escape(number) + r'(?!\d)', address, re.IGNORECASE)
+            and isinstance(confidence, (int, float)) and confidence >= 0.8
+            and len(coordinates) == 2
+            and all(type(value) in (int, float) and math.isfinite(value) for value in coordinates)
+            and -180 <= coordinates[0] <= 180 and -90 <= coordinates[1] <= 90):
+            candidates.append((confidence, coordinates))
+    candidates.sort(key=lambda candidate: candidate[0], reverse=True)
+    if not candidates or (len(candidates) > 1 and candidates[0][0] == candidates[1][0] and candidates[0][1] != candidates[1][1]):
+        raise ValueError('Não foi possível localizar o endereço com precisão. Inclua rua, número, bairro, cidade e CEP ou combine a entrega pelo WhatsApp.')
+    return candidates[0][1]
+
+
+def route_distance(address):
+    global ORS_ORIGIN
+    if ORS_ORIGIN is None:
+        ORS_ORIGIN = geocode_address('Rua Nelson de Araújo, 684, Dourados, MS, Brasil')
+    destination = geocode_address(address)
+    result = ors_request('/v2/directions/driving-car/json', {'coordinates': [ORS_ORIGIN, destination], 'units': 'm'})
     routes = result.get('routes', [])
-    if not routes or type(routes[0].get('distanceMeters')) is not int:
+    meters = routes[0].get('summary', {}).get('distance') if routes else None
+    if type(meters) not in (int, float) or not math.isfinite(meters) or meters < 0:
         raise ValueError('Não encontramos uma rota. Confira o endereço ou fale com o restaurante.')
-    return routes[0]['distanceMeters']
+    # Round upward so a fraction above a fare boundary enters the next band.
+    return math.ceil(meters)
 
 
 def quote_delivery(payload):

@@ -17,7 +17,7 @@ python3 server.py
 
 O cliente monta o carrinho, informa retirada ou entrega e abre uma mensagem pronta para o WhatsApp (67) 99841-8006. Reservas usam o mesmo canal. O cliente precisa enviar a mensagem, e a equipe deve confirmar disponibilidade, valores finais e atendimento. O checkout online está implementado, mas depende da configuração descrita abaixo. Reservas continuam como solicitações pelo WhatsApp. O carrinho é preservado no navegador entre visitas; dados de pedidos online são armazenados no servidor.
 
-As fontes do Google são opcionais: fontes locais servem de fallback. Para publicar com pagamento online, use hospedagem com Python, HTTPS e armazenamento persistente privado. Esta implementação ainda não foi publicada e não altera o site original.
+As fontes do Google são opcionais: fontes locais servem de fallback. Para publicar com pagamento online, use hospedagem com Python, HTTPS e armazenamento persistente privado. Versão de teste publicada em https://teste1-vryg.onrender.com/; o domínio original não foi alterado.
 
 ## Checkout online (Mercado Pago)
 
@@ -34,7 +34,7 @@ O servidor calcula os preços pelo catálogo, guarda pedidos em SQLite, reaprove
 
 Pagamento online para retirada ou entrega (esta última depende da configuração do cálculo de frete). Tabela aprovada: até 3 km R$ 6,50; acima de 3 até 5 km R$ 7,50; acima de 5 até 7 km R$ 8,50; acima de 7 km R$ 10. Não foi definido limite máximo de distância.
 
-Configure `GOOGLE_MAPS_API_KEY` no servidor, com Routes API habilitada e faturamento ativo no projeto Google Maps. Restrinja a chave à Routes API. O servidor usa Google Routes para calcular percurso de carro desde Rua Nelson de Araújo, 684, Dourados MS até o endereço completo informado. Cotações valem 15 minutos, são armazenadas no servidor e vinculadas ao endereço. Alterar o endereço exige novo cálculo. O servidor inclui o frete no valor cobrado e rejeita valores de frete enviados pelo navegador. Sem chave de mapas ou em caso de erro, entrega online fica bloqueada e WhatsApp continua disponível. A conexão real com Google Maps ainda precisa ser validada; testes de rotas são simulados.
+Configure `ORS_API_KEY` no servidor com uma chave do OpenRouteService que permita Geocoding e Directions. O plano gratuito tem limites; consulte os limites e condições vigentes no painel. A chave é enviada em Authorization somente do servidor para api.openrouteservice.org. O backend localiza rua e número no Brasil e recusa resultados imprecisos ou ambíguos. A cobertura de endereços em Dourados precisa ser testada com a chave real. O percurso é calculado de carro desde Rua Nelson de Araújo, 684, Dourados MS. A localização do restaurante é reutilizada enquanto o processo estiver ativo. Cotações valem 15 minutos, ficam vinculadas ao endereço e incluem o frete no valor cobrado. Mudanças de endereço exigem novo cálculo. Em falha, ausência de chave ou limite atingido, entrega online fica bloqueada e WhatsApp permanece disponível. GOOGLE_MAPS_API_KEY não é mais usada. No Render, adicione ORS_API_KEY em Environment e publique a versão atual. A conexão real com ORS ainda requer credencial; testes usam respostas simuladas.
 
 O carrinho é mantido localmente no navegador. As informações dos pedidos online são armazenadas no banco privado; não existe painel de atendimento nesta versão. Antes de receber pedidos reais, defina com a equipe como acompanhar o banco/pedidos e confirmar preparo, além de hospedagem Python com HTTPS, backups e a validação ponta a ponta em sandbox. Hospedagem somente estática não suporta este checkout.
 
