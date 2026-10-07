@@ -197,6 +197,8 @@ async function checkReturnedPayment() {
   const messages = {
     paid: 'Pagamento aprovado! Aguarde a confirmação do restaurante sobre o preparo e o prazo de entrega ou retirada.',
     pending: 'Pagamento em processamento. Aguarde a confirmação; não refaça o pagamento.',
+    awaiting_payment: 'Ainda não encontramos uma transação no Mercado Pago para este pedido. Se não houver pagamento na sua Atividade, você pode retomar o checkout existente.',
+    verification_pending: 'Encontramos uma transação, mas ainda não conseguimos confirmar os dados do pagamento. Não pague novamente; fale com o restaurante.',
     failed: 'Pagamento recusado. Confira o Mercado Pago ou fale com o restaurante.',
     cancelled: 'Pagamento cancelado. Fale com o restaurante se precisar de ajuda.',
     refunded: 'Pagamento estornado ou contestado. Entre em contato com o restaurante.'
@@ -207,7 +209,15 @@ async function checkReturnedPayment() {
       const response = await fetch('/api/order-status?order=' + encodeURIComponent(orderId));
       const result = await response.json();
       if (!response.ok) throw new Error(result.error);
-      display.textContent = (result.test_mode ? 'TESTE — ' : '') + (messages[result.status] || messages.pending);
+      display.textContent = (result.test_mode ? 'TESTE — ' : '') + (messages[result.status] || 'Não foi possível determinar o status do pagamento. Fale com o restaurante antes de tentar novamente.');
+      if (result.status === 'awaiting_payment' && result.checkout_url) {
+        const destination = new URL(result.checkout_url);
+        if (destination.protocol === 'https:' && destination.hostname === 'www.mercadopago.com.br') {
+          const resume = element('a', 'Retomar este checkout ↗', 'button');
+          resume.href = destination.href;
+          display.append(document.createElement('br'), resume);
+        }
+      }
       if (result.status === 'paid') {
         try {
           if (sessionStorage.getItem('benedetto-order') === orderId) {
@@ -215,7 +225,7 @@ async function checkReturnedPayment() {
           }
         } catch {}
       }
-      if (result.status === 'pending' && ++attempts < 30) setTimeout(refresh, 10000);
+      if (['pending', 'awaiting_payment', 'verification_pending'].includes(result.status) && ++attempts < 30) setTimeout(refresh, 10000);
     } catch (error) { display.textContent = error.message || 'Não foi possível verificar o pagamento. Atualize a página para tentar novamente.'; }
   }
   await refresh();

@@ -62,6 +62,23 @@ class CheckoutTests(unittest.TestCase):
         with patch.object(server, 'mp', return_value={'tags': ['test_user']}):
             server.verify_test_seller()
 
+    def test_empty_search_does_not_mean_processing(self):
+        with patch.object(server, 'mp', return_value={'init_point': 'https://www.mercadopago.com.br/checkout/test'}):
+            order = server.checkout(self.payload, self.key)
+        with patch.object(server, 'mp', return_value={'results': []}):
+            result = server.reconcile(order['order_id'])
+            self.assertEqual(result['status'], 'awaiting_payment')
+            self.assertEqual(result['checkout_url'], order['checkout_url'])
+        payment = {'external_reference': order['order_id'], 'currency_id': 'BRL', 'transaction_amount': 130, 'status': 'pending', 'live_mode': False}
+        with patch.object(server, 'mp', return_value={'results': [payment]}):
+            result = server.reconcile(order['order_id'])
+            self.assertEqual(result['status'], 'pending')
+            self.assertNotIn('checkout_url', result)
+        with server.db() as conn:
+            conn.execute("UPDATE orders SET status='paid'")
+        with patch.object(server, 'mp', return_value={'results': []}):
+            self.assertEqual(server.reconcile(order['order_id'])['status'], 'paid')
+
     def test_invalid_orders(self):
         for items in [[{'id': 'unknown', 'quantity': 1}], [{'id': 'tartine', 'quantity': -1}], [{'id': 'tartine', 'quantity': True}], [{'id': 'tartine', 'quantity': 31}], [{'id': 'tartine', 'quantity': 1}] * 2, []]:
             with self.subTest(items=items), self.assertRaises(ValueError):
@@ -75,7 +92,7 @@ class CheckoutTests(unittest.TestCase):
         payment = {'external_reference': order['order_id'], 'currency_id': 'BRL', 'transaction_amount': 130, 'status': 'approved', 'live_mode': False}
         for wrong in [{'transaction_amount': 1}, {'currency_id': 'USD'}, {'external_reference': 'another-order'}, {'live_mode': True}]:
             with self.subTest(wrong=wrong), patch.object(server, 'mp', return_value={'results': [{**payment, **wrong}]}):
-                self.assertEqual(server.reconcile(order['order_id'])['status'], 'pending')
+                self.assertEqual(server.reconcile(order['order_id'])['status'], 'verification_pending')
         with patch.object(server, 'mp', return_value={'results': [payment]}):
             self.assertEqual(server.reconcile(order['order_id'])['status'], 'paid')
         with patch.object(server, 'mp', return_value={'results': [{**payment, 'status': 'refunded', 'transaction_amount_refunded': 130}]}):

@@ -206,6 +206,8 @@ def reconcile(order_id):
         return None
     if ready() and order['checkout_url']:
         result = mp('/v1/payments/search?' + urlencode({'external_reference': order_id, 'sort': 'date_created', 'criteria': 'desc', 'limit': 100}))
+        if not isinstance(result.get('results'), list):
+            raise ValueError('Invalid payment search response')
         payments = [p for p in result.get('results', []) if p.get('external_reference') == order_id and p.get('live_mode') is (not TEST_MODE) and p.get('currency_id') == 'BRL' and Decimal(str(p.get('transaction_amount', 0))) * 100 == order['total']]
         status = order['status']
         approved = [p for p in payments if p.get('status') == 'approved' and not p.get('transaction_amount_refunded', 0)]
@@ -214,11 +216,16 @@ def reconcile(order_id):
         elif payments:
             provider_status = payments[0].get('status')
             status = {'refunded': 'refunded', 'charged_back': 'refunded', 'rejected': 'failed', 'cancelled': 'cancelled'}.get(provider_status, 'pending')
+        elif status not in ('paid', 'refunded', 'failed', 'cancelled'):
+            status = 'verification_pending' if result.get('results') else 'awaiting_payment'
         with db() as connection:
             connection.execute('UPDATE orders SET status=? WHERE id=?', (status, order_id))
     else:
         status = order['status']
-    return {'order_id': order_id, 'status': status, 'total': order['total'] / 100, 'test_mode': TEST_MODE}
+    result = {'order_id': order_id, 'status': status, 'total': order['total'] / 100, 'test_mode': TEST_MODE}
+    if status == 'awaiting_payment' and urlsplit(order['checkout_url'] or '').hostname == 'www.mercadopago.com.br':
+        result['checkout_url'] = order['checkout_url']
+    return result
 
 
 class Handler(SimpleHTTPRequestHandler):
@@ -287,7 +294,7 @@ def sync_orders():
         if not ready():
             continue
         with db() as connection:
-            rows = connection.execute("SELECT id FROM orders WHERE status IN ('pending','paid') AND checkout_url IS NOT NULL AND created>? ORDER BY created DESC LIMIT 50", (time.time() - 7 * 86400,)).fetchall()
+            rows = connection.execute("SELECT id FROM orders WHERE status IN ('pending','paid','awaiting_payment','verification_pending') AND checkout_url IS NOT NULL AND created>? ORDER BY created DESC LIMIT 50", (time.time() - 7 * 86400,)).fetchall()
         for row in rows:
             try:
                 reconcile(row['id'])
