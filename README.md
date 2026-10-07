@@ -63,3 +63,5 @@ Depois que o Render fornecer o endereço HTTPS, configure `PAYMENT_PUBLIC_URL` c
 No modo de teste, o backend consulta `/users/me` e exige a marca `test_user` no vendedor antes de iniciar pagamentos. Checkout Pro abre `init_point`, inclusive para contas de teste, sem usar `sandbox_init_point`. Links de sandbox salvos em tentativas anteriores são substituídos ao tentar novamente. Mantenha PAYMENT_TEST_MODE=true e comprador e vendedor de teste distintos.
 
 Na confirmação em teste, o backend verifica vendedor marcado test_user e collector_id da transação, além de referência, BRL e total. O campo live_mode isolado não determina uma conta de teste usando APP_USR no Checkout Pro padrão. Em produção, pagamentos sandbox não são aceitos.
+
+Quando o ORS não localizar o restaurante com precisão, configure RESTAURANT_LATITUDE e RESTAURANT_LONGITUDE com as coordenadas verificadas do ponto de partida. Use graus decimais com ponto; não estime os valores. A ordem enviada à API é longitude, latitude. Os destinos continuam sujeitos à localização precisa por endereço.

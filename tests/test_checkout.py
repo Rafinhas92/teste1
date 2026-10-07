@@ -172,6 +172,18 @@ class OpenRouteServiceTests(unittest.TestCase):
             self.assertEqual(route_calls[0].args[1]['coordinates'], [[-54.80, -22.22], [-54.81, -22.23]])
             self.assertEqual(api.call_count, 5)
 
+    def test_explicit_origin_coordinates_bypass_origin_search(self):
+        with patch.dict(os.environ, {'RESTAURANT_LATITUDE': '-22.22', 'RESTAURANT_LONGITUDE': '-54.80'}), patch.object(server, 'geocode_address', return_value=[-54.81,-22.23]) as geocode, patch.object(server, 'ors_request', return_value={'routes': [{'summary': {'distance': 5000}}]}) as route:
+            self.assertEqual(server.route_distance('Rua Teste, 100, Dourados MS'), 5000)
+            geocode.assert_called_once_with('Rua Teste, 100, Dourados MS')
+            self.assertEqual(route.call_args.args[1]['coordinates'], [[-54.80,-22.22],[-54.81,-22.23]])
+
+    def test_invalid_origin_coordinates_do_not_create_a_route(self):
+        with patch.dict(os.environ, {'RESTAURANT_LATITUDE': 'nan', 'RESTAURANT_LONGITUDE': '-54.80'}), patch.object(server, 'ors_request') as route:
+            with self.assertRaisesRegex(ValueError, 'localização do restaurante'):
+                server.route_distance('Rua Teste, 100, Dourados MS')
+            route.assert_not_called()
+
     def test_inaccurate_and_ambiguous_addresses_are_rejected(self):
         for features in [[], [self.feature([-54.8,-22.2], confidence=0.5)], [self.feature([-54.8,-22.2], number='999')], [self.feature([-54.8,-22.2]), self.feature([-54.9,-22.3])]]:
             with self.subTest(features=features), patch.object(server, 'ors_request', return_value={'features': features}), self.assertRaises(ValueError):

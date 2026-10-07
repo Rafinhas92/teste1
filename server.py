@@ -111,7 +111,21 @@ def geocode_address(address):
 def route_distance(address):
     global ORS_ORIGIN
     if ORS_ORIGIN is None:
-        ORS_ORIGIN = geocode_address('Rua Nelson de Araújo, 684, Dourados, MS, Brasil')
+        latitude = os.environ.get('RESTAURANT_LATITUDE', '')
+        longitude = os.environ.get('RESTAURANT_LONGITUDE', '')
+        if latitude or longitude:
+            try:
+                lat, lon = float(latitude), float(longitude)
+                if not math.isfinite(lat) or not math.isfinite(lon) or not -90 <= lat <= 90 or not -180 <= lon <= 180:
+                    raise ValueError()
+            except ValueError:
+                raise ValueError('A localização do restaurante precisa ser conferida. Combine a entrega pelo WhatsApp.') from None
+            ORS_ORIGIN = [lon, lat]
+        else:
+            try:
+                ORS_ORIGIN = geocode_address('Rua Nelson de Araújo, 684, Dourados, MS, Brasil')
+            except ValueError:
+                raise ValueError('Não conseguimos localizar o restaurante com precisão. A equipe precisa confirmar o ponto de partida antes de calcular o frete.') from None
     destination = geocode_address(address)
     result = ors_request('/v2/directions/driving-car/json', {'coordinates': [ORS_ORIGIN, destination], 'units': 'm'})
     routes = result.get('routes', [])
