@@ -113,6 +113,10 @@ def route_distance(address):
     if ORS_ORIGIN is None:
         latitude = os.environ.get('RESTAURANT_LATITUDE', '')
         longitude = os.environ.get('RESTAURANT_LONGITUDE', '')
+        if not latitude and not longitude:
+            location = CONFIG.get('restaurant_location', {})
+            latitude = location.get('latitude', '')
+            longitude = location.get('longitude', '')
         if latitude or longitude:
             try:
                 lat, lon = float(latitude), float(longitude)

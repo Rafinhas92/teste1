@@ -158,6 +158,16 @@ class OpenRouteServiceTests(unittest.TestCase):
         settings = patch.multiple(server, MAPS_KEY='local-ors-placeholder', ORS_ORIGIN=None)
         settings.start()
         self.addCleanup(settings.stop)
+        location = patch.dict(server.CONFIG, {'restaurant_location': {}})
+        location.start()
+        self.addCleanup(location.stop)
+
+    def test_confirmed_restaurant_pin_is_used_without_origin_search(self):
+        location = {'latitude': -22.22596060467644, 'longitude': -54.80929650358167}
+        with patch.dict(server.CONFIG, {'restaurant_location': location}), patch.dict(os.environ, {'RESTAURANT_LATITUDE': '', 'RESTAURANT_LONGITUDE': ''}), patch.object(server, 'geocode_address', return_value=[-54.81, -22.23]) as geocode, patch.object(server, 'ors_request', return_value={'routes': [{'summary': {'distance': 1000}}]}) as api:
+            self.assertEqual(server.route_distance('Rua Teste, 100, Dourados MS'), 1000)
+            geocode.assert_called_once_with('Rua Teste, 100, Dourados MS')
+            self.assertEqual(api.call_args.args[1]['coordinates'][0], [location['longitude'], location['latitude']])
 
     def feature(self, coordinates, number='684', confidence=1):
         return {'geometry': {'coordinates': coordinates}, 'properties': {'layer': 'address', 'housenumber': number, 'confidence': confidence}}

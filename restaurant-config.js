@@ -2,6 +2,10 @@
 window.restaurantConfig = {
   "whatsapp": "5567998418006",
   "demo": false,
+  "restaurant_location": {
+    "latitude": -22.22596060467644,
+    "longitude": -54.80929650358167
+  },
   "categories": [
     {
       "id": "entradas",
