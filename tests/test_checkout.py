@@ -20,7 +20,7 @@ class CheckoutTests(unittest.TestCase):
         self.settings = patch.multiple(server, TOKEN='local-test-placeholder', PUBLIC_URL='https://example.com', TEST_MODE=True)
         self.settings.start()
         self.addCleanup(self.settings.stop)
-        self.seller_guard = patch.object(server, 'verify_test_seller')
+        self.seller_guard = patch.object(server, 'verify_test_seller', return_value={'id': 123, 'tags': ['test_user']})
         self.seller_guard.start()
         self.addCleanup(self.seller_guard.stop)
         self.payload = {'customer': {'name': 'Teste Local', 'phone': '67999999999', 'notes': 'Sem cebola'}, 'fulfillment': 'Retirada', 'items': [{'id': 'tartine', 'quantity': 2, 'price': 0.01}], 'total': 0.01}
@@ -69,7 +69,7 @@ class CheckoutTests(unittest.TestCase):
             result = server.reconcile(order['order_id'])
             self.assertEqual(result['status'], 'awaiting_payment')
             self.assertEqual(result['checkout_url'], order['checkout_url'])
-        payment = {'external_reference': order['order_id'], 'currency_id': 'BRL', 'transaction_amount': 130, 'status': 'pending', 'live_mode': False}
+        payment = {'external_reference': order['order_id'], 'currency_id': 'BRL', 'transaction_amount': 130, 'status': 'pending', 'live_mode': False, 'collector_id': 123}
         with patch.object(server, 'mp', return_value={'results': [payment]}):
             result = server.reconcile(order['order_id'])
             self.assertEqual(result['status'], 'pending')
@@ -89,14 +89,31 @@ class CheckoutTests(unittest.TestCase):
     def test_payment_is_verified_not_return_parameter(self):
         with patch.object(server, 'mp', return_value={'init_point': 'https://www.mercadopago.com.br/test'}):
             order = server.checkout(self.payload, self.key)
-        payment = {'external_reference': order['order_id'], 'currency_id': 'BRL', 'transaction_amount': 130, 'status': 'approved', 'live_mode': False}
-        for wrong in [{'transaction_amount': 1}, {'currency_id': 'USD'}, {'external_reference': 'another-order'}, {'live_mode': True}]:
+        payment = {'external_reference': order['order_id'], 'currency_id': 'BRL', 'transaction_amount': 130, 'status': 'approved', 'live_mode': False, 'collector_id': 123}
+        for wrong in [{'transaction_amount': 1}, {'currency_id': 'USD'}, {'external_reference': 'another-order'}, {'collector_id': 999}]:
             with self.subTest(wrong=wrong), patch.object(server, 'mp', return_value={'results': [{**payment, **wrong}]}):
                 self.assertEqual(server.reconcile(order['order_id'])['status'], 'verification_pending')
         with patch.object(server, 'mp', return_value={'results': [payment]}):
             self.assertEqual(server.reconcile(order['order_id'])['status'], 'paid')
         with patch.object(server, 'mp', return_value={'results': [{**payment, 'status': 'refunded', 'transaction_amount_refunded': 130}]}):
             self.assertEqual(server.reconcile(order['order_id'])['status'], 'refunded')
+
+    def test_test_seller_standard_checkout_can_report_live_mode(self):
+        with patch.object(server, 'mp', return_value={'init_point': 'https://www.mercadopago.com.br/test'}):
+            order = server.checkout(self.payload, self.key)
+        payment = {'external_reference': order['order_id'], 'currency_id': 'BRL', 'transaction_amount': 130, 'status': 'approved', 'live_mode': True, 'collector_id': 123}
+        with patch.object(server, 'mp', return_value={'results': [payment]}):
+            self.assertEqual(server.reconcile(order['order_id'])['status'], 'paid')
+        with patch.object(server, 'verify_test_seller', side_effect=ValueError('Real seller')), patch.object(server, 'mp', return_value={'results': [payment]}):
+            with self.assertRaises(ValueError):
+                server.reconcile(order['order_id'])
+
+    def test_production_rejects_sandbox_payment(self):
+        with patch.object(server, 'mp', return_value={'init_point': 'https://www.mercadopago.com.br/test'}):
+            order = server.checkout(self.payload, self.key)
+        payment = {'external_reference': order['order_id'], 'currency_id': 'BRL', 'transaction_amount': 130, 'status': 'approved', 'live_mode': False, 'collector_id': 123}
+        with patch.object(server, 'TEST_MODE', False), patch.object(server, 'mp', return_value={'results': [payment]}):
+            self.assertEqual(server.reconcile(order['order_id'])['status'], 'verification_pending')
 
     def test_missing_configuration_and_wrong_redirect(self):
         with patch.object(server, 'TOKEN', ''), self.assertRaises(ValueError):

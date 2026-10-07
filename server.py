@@ -159,6 +159,7 @@ def verify_test_seller():
     account = mp('/users/me')
     if 'test_user' not in account.get('tags', []):
         raise ValueError('Modo de teste: configure a credencial APP_USR da aplicação do vendedor de teste. Nenhum pagamento foi iniciado.')
+    return account
 
 
 def checkout(payload, key):
@@ -208,7 +209,16 @@ def reconcile(order_id):
         result = mp('/v1/payments/search?' + urlencode({'external_reference': order_id, 'sort': 'date_created', 'criteria': 'desc', 'limit': 100}))
         if not isinstance(result.get('results'), list):
             raise ValueError('Invalid payment search response')
-        payments = [p for p in result.get('results', []) if p.get('external_reference') == order_id and p.get('live_mode') is (not TEST_MODE) and p.get('currency_id') == 'BRL' and Decimal(str(p.get('transaction_amount', 0))) * 100 == order['total']]
+        # Test sellers use the regular Checkout Pro flow with APP_USR tokens.
+        # Its live_mode flag alone does not establish whether the seller is real.
+        # Verify the test seller and collector instead of expecting live_mode=False.
+        test_seller = verify_test_seller() if TEST_MODE else None
+        if TEST_MODE and not test_seller.get('id'):
+            raise ValueError('Could not verify test seller identity')
+        payments = [p for p in result.get('results', []) if p.get('external_reference') == order_id
+                    and (str(p.get('collector_id')) == str(test_seller['id']) if TEST_MODE else p.get('live_mode') is True)
+                    and p.get('currency_id') == 'BRL'
+                    and Decimal(str(p.get('transaction_amount', 0))) * 100 == order['total']]
         status = order['status']
         approved = [p for p in payments if p.get('status') == 'approved' and not p.get('transaction_amount_refunded', 0)]
         if approved:
