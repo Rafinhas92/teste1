@@ -20,11 +20,14 @@ class CheckoutTests(unittest.TestCase):
         self.settings = patch.multiple(server, TOKEN='local-test-placeholder', PUBLIC_URL='https://example.com', TEST_MODE=True)
         self.settings.start()
         self.addCleanup(self.settings.stop)
+        self.seller_guard = patch.object(server, 'verify_test_seller')
+        self.seller_guard.start()
+        self.addCleanup(self.seller_guard.stop)
         self.payload = {'customer': {'name': 'Teste Local', 'phone': '67999999999', 'notes': 'Sem cebola'}, 'fulfillment': 'Retirada', 'items': [{'id': 'tartine', 'quantity': 2, 'price': 0.01}], 'total': 0.01}
         self.key = '00000000-0000-4000-8000-000000000000'
 
     def test_server_prices_and_idempotency(self):
-        with patch.object(server, 'mp', return_value={'sandbox_init_point': 'https://sandbox.mercadopago.com.br/checkout/test'}) as gateway:
+        with patch.object(server, 'mp', return_value={'init_point': 'https://www.mercadopago.com.br/checkout/test'}) as gateway:
             first = server.checkout(self.payload, self.key)
             second = server.checkout(self.payload, self.key)
             self.assertEqual(first, second)
@@ -37,6 +40,28 @@ class CheckoutTests(unittest.TestCase):
             self.assertEqual(row['total'], 13000)
             self.assertEqual(row['status'], 'pending')
 
+    def test_uses_regular_checkout_and_refreshes_old_sandbox_link(self):
+        result = {'init_point': 'https://www.mercadopago.com.br/checkout/test', 'sandbox_init_point': 'https://sandbox.mercadopago.com.br/old'}
+        with patch.object(server, 'mp', return_value=result):
+            first = server.checkout(self.payload, self.key)
+            self.assertEqual(first['checkout_url'], result['init_point'])
+            with server.db() as conn:
+                conn.execute('UPDATE orders SET checkout_url=?', (result['sandbox_init_point'],))
+            updated = server.checkout(self.payload, self.key)
+            self.assertEqual(updated['order_id'], first['order_id'])
+            self.assertEqual(updated['checkout_url'], result['init_point'])
+
+    def test_real_seller_is_blocked_in_test_mode(self):
+        self.seller_guard.stop()
+        with patch.object(server, 'mp', return_value={'tags': []}) as gateway:
+            with self.assertRaisesRegex(ValueError, 'vendedor de teste'):
+                server.checkout(self.payload, self.key)
+            gateway.assert_called_once_with('/users/me')
+        with server.db() as conn:
+            self.assertEqual(conn.execute('SELECT count(*) FROM orders').fetchone()[0], 0)
+        with patch.object(server, 'mp', return_value={'tags': ['test_user']}):
+            server.verify_test_seller()
+
     def test_invalid_orders(self):
         for items in [[{'id': 'unknown', 'quantity': 1}], [{'id': 'tartine', 'quantity': -1}], [{'id': 'tartine', 'quantity': True}], [{'id': 'tartine', 'quantity': 31}], [{'id': 'tartine', 'quantity': 1}] * 2, []]:
             with self.subTest(items=items), self.assertRaises(ValueError):
@@ -45,7 +70,7 @@ class CheckoutTests(unittest.TestCase):
             server.validate({**self.payload, 'fulfillment': 'Entrega'})
 
     def test_payment_is_verified_not_return_parameter(self):
-        with patch.object(server, 'mp', return_value={'sandbox_init_point': 'https://sandbox.mercadopago.com.br/test'}):
+        with patch.object(server, 'mp', return_value={'init_point': 'https://www.mercadopago.com.br/test'}):
             order = server.checkout(self.payload, self.key)
         payment = {'external_reference': order['order_id'], 'currency_id': 'BRL', 'transaction_amount': 130, 'status': 'approved', 'live_mode': False}
         for wrong in [{'transaction_amount': 1}, {'currency_id': 'USD'}, {'external_reference': 'another-order'}, {'live_mode': True}]:
@@ -59,7 +84,7 @@ class CheckoutTests(unittest.TestCase):
     def test_missing_configuration_and_wrong_redirect(self):
         with patch.object(server, 'TOKEN', ''), self.assertRaises(ValueError):
             server.checkout(self.payload, self.key)
-        with patch.object(server, 'mp', return_value={'sandbox_init_point': 'https://malicious.example/test'}), self.assertRaises(RuntimeError):
+        with patch.object(server, 'mp', return_value={'init_point': 'https://malicious.example/test'}), self.assertRaises(RuntimeError):
             server.checkout(self.payload, self.key)
 
     def test_delivery_price_boundaries(self):
@@ -88,7 +113,7 @@ class CheckoutTests(unittest.TestCase):
             server.validate(payload)
 
     def test_changed_order_cannot_reuse_key(self):
-        with patch.object(server, 'mp', return_value={'sandbox_init_point': 'https://sandbox.mercadopago.com.br/test'}):
+        with patch.object(server, 'mp', return_value={'init_point': 'https://www.mercadopago.com.br/test'}):
             server.checkout(self.payload, self.key)
             with self.assertRaises(ValueError):
                 server.checkout({**self.payload, 'items': [{'id': 'tartine', 'quantity': 1}]}, self.key)

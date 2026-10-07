@@ -153,12 +153,21 @@ def validate(payload):
     return {'customer': {'name': name.strip(), 'phone': re.sub(r'\D', '', phone), 'notes': notes}, 'fulfillment': fulfillment, 'address': payload.get('address', '') if shipping else '', 'items': items}, total
 
 
+def verify_test_seller():
+    if not TEST_MODE:
+        return
+    account = mp('/users/me')
+    if 'test_user' not in account.get('tags', []):
+        raise ValueError('Modo de teste: configure a credencial APP_USR da aplicação do vendedor de teste. Nenhum pagamento foi iniciado.')
+
+
 def checkout(payload, key):
     if not ready():
         raise ValueError('Pagamento online ainda não configurado. Use o WhatsApp.')
     if not isinstance(key, str) or not re.fullmatch(r'[A-Za-z0-9-]{16,80}', key):
         raise ValueError('Identificador de pedido inválido.')
     normalized, total = validate(payload)
+    verify_test_seller()
     serialized = json.dumps(normalized, sort_keys=True)
     fingerprint = hashlib.sha256(serialized.encode()).hexdigest()
     with LOCK:
@@ -166,7 +175,7 @@ def checkout(payload, key):
             row = connection.execute('SELECT * FROM orders WHERE request_key=?', (key,)).fetchone()
             if row and row['fingerprint'] != fingerprint:
                 raise ValueError('O pedido mudou. Tente novamente.')
-            if row and row['checkout_url']:
+            if row and row['checkout_url'] and urlsplit(row['checkout_url']).hostname == 'www.mercadopago.com.br':
                 return {'order_id': row['id'], 'checkout_url': row['checkout_url']}
             order_id = row['id'] if row else secrets.token_urlsafe(32)
             if not row:
@@ -179,9 +188,11 @@ def checkout(payload, key):
             'back_urls': {'success': back_url, 'pending': back_url, 'failure': back_url},
             'auto_return': 'approved', 'statement_descriptor': 'BENEDETTO',
         }, key)
-        checkout_url = preference.get('sandbox_init_point' if TEST_MODE else 'init_point', '')
+        # Checkout Pro test accounts use the regular checkout URL.
+        # Test mode is enforced by the seller-account check, not the URL.
+        checkout_url = preference.get('init_point', '')
         parsed = urlsplit(checkout_url)
-        if parsed.scheme != 'https' or parsed.hostname not in ('www.mercadopago.com.br', 'sandbox.mercadopago.com.br'):
+        if parsed.scheme != 'https' or parsed.hostname != 'www.mercadopago.com.br':
             raise RuntimeError('Unexpected checkout destination')
         with db() as connection:
             connection.execute('UPDATE orders SET checkout_url=? WHERE id=?', (checkout_url, order_id))

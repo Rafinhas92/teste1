@@ -25,7 +25,7 @@ Execute `python3 server.py` em `/workspace/teste1` (porta padrão 8001). O servi
 
 Configure variáveis no servidor, nunca no JavaScript público:
 
-- `MERCADO_PAGO_ACCESS_TOKEN`: Access Token da conta do restaurante, inserido de forma segura nas configurações do ambiente.
+- `MERCADO_PAGO_ACCESS_TOKEN`: Em modo de teste, credencial APP_USR da aplicação vinculada ao vendedor de teste. Para produção, credencial da conta real do restaurante. Insira de forma segura nas configurações do ambiente.
 - `PAYMENT_PUBLIC_URL`: URL HTTPS pública da nova aplicação, sem barra final. Não deve apontar ao site antigo enquanto ele não executar este backend.
 - `PAYMENT_TEST_MODE=true`: checkout de teste. Só alterar para `false` depois de validar com credenciais e usuários de teste do Mercado Pago e configurar a conta de produção.
 - `ORDER_DATA_DIR`: diretório privado e persistente para pedidos; padrão `.local/`. Preserve esse banco e faça backups na hospedagem.
@@ -59,3 +59,5 @@ Para configurar manualmente em New → Web Service:
 Para uma prévia gratuita sem pagamentos, omita o disco e ORDER_DATA_DIR, e não configure credenciais. Os pedidos locais não serão persistentes nesse modo. Para aceitar pagamentos, use o serviço com armazenamento persistente.
 
 Depois que o Render fornecer o endereço HTTPS, configure `PAYMENT_PUBLIC_URL` com esse endereço. Insira as credenciais diretamente nos campos secretos de Environment do Render. Os segredos do ambiente deste chat não são transferidos automaticamente para a hospedagem. Não publique tokens em arquivos ou no GitHub. Teste o checkout e as rotas antes de usar credenciais de produção ou conectar o domínio atual.
+
+No modo de teste, o backend consulta `/users/me` e exige a marca `test_user` no vendedor antes de iniciar pagamentos. Checkout Pro abre `init_point`, inclusive para contas de teste, sem usar `sandbox_init_point`. Links de sandbox salvos em tentativas anteriores são substituídos ao tentar novamente. Mantenha PAYMENT_TEST_MODE=true e comprador e vendedor de teste distintos.
